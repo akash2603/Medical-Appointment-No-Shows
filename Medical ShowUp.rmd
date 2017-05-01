@@ -1,0 +1,507 @@
+---
+title: "Medical Appointment No Shows"
+author: "Akash Barnwal"
+date: "April 23, 2017"
+output: html_document
+---
+
+
+Setting up important libraries
+```{r}
+library(tidyverse)
+library(lubridate)
+library(e1071)
+library(caret)
+library(randomForest)
+library(nnet)
+library(dplyr)
+library(corrplot)
+```
+
+
+Taking data from the UCI machine learning repository. 
+```{r}
+medical_data <- read.csv("E:/DataScience/Semester 2/Statistical Learning/Mara/Medical_Data (1).csv",header=T, na.strings=c(""))
+```
+
+
+Inference: 
+The data contains 3 lakh records of medical appointment with 15 characteristic of each. The target
+variable is indicating whether a patient will show up or not show up at the appointment.
+
+The Initial Step in Building Successful Predictive Analytics Solutions
+
+a) Depicting a random sample of 100 records from the file to understand the data
+```{r}
+medical_data_sample <- medical_data[sample(1:nrow(medical_data), 100, replace=FALSE),]
+medical_data_sample
+```
+
+b) Checking no of missing values in data
+```{r}
+sapply(medical_data,function(x) sum(is.na(x)))
+```
+
+Inference:
+
+We can see that there are no missing values in the data. The objective of doing this is to remove all the variables which has more than 90% missing values or incase we have few missing 
+values then replacing them with mean value or removing them. 
+
+c) Checking for unique values in the data
+```{r}
+sapply(medical_data, function(x) length(unique(x)))
+```
+
+Inference:
+With most of the variables showing binary values, appointment registration has 295425 unique records.
+Awaiting time has 213 unique records. AppointmentData has 534 records.The objective of doing this to remove all the variables which has one unique values. 
+
+```{r}
+summary(medical_data)
+```
+
+```{r}
+range(medical_data$Age)
+```
+
+Inference: 
+We can see that age has negative values which we need to remove for better analysis. Removing the age with negative values
+
+```{r}
+medical_data <- medical_data[medical_data$Age>0,]
+```
+
+
+Looking into the data we can see some of the values of awaiting time to be negative which needs to be taken as positive values as Time is a positive value.
+
+```{r}
+medical_data$AwaitingTime <- abs(medical_data$AwaitingTime)
+```
+
+
+```{r}
+summary(medical_data)
+```
+
+
+d) Lets have a look into duplicate values which could be there and can be responsible for deviating the analysis
+
+```{r}
+dup_rows <- duplicated(medical_data)
+dup_rows_num <- sum(dup_rows)
+dup_rows_num
+```
+
+Inference: 
+There are a total of 322 records which are duplicate values. A possible reason could be two or more appointment
+for the same person.
+
+General Data Exploration
+
+
+Let's see the distribution of "No-Show" and "Show-up" cases
+```{r}
+status_matrix <- table(medical_data$Status)
+status_matrix
+```
+
+```{r}
+ggplot(medical_data, aes(x=Status, fill=Status)) + geom_bar()
+```
+
+
+Inference: 
+A total of 201889 records are show up and 87779 are no show up.
+
+
+The percentage of people who don't show it is very high:
+```{r}
+medical_data %>% group_by(Status) %>% summarise(Count = n()) %>% mutate(Percent = Count/sum(Count))
+```
+
+
+Now lets explore the analysis on "AppointmentData":
+
+```{r}
+
+medical_data %>% group_by(ApointmentData) %>% summarise(total_noshow=sum(Status=="No-Show")/n()) %>% ggplot(aes(x=ApointmentData, y=total_noshow)) + geom_point(alpha=0.3) + geom_smooth(method = "lm")
+```
+
+
+Inference: 
+With all the data at the center it can be said that the proportion of "No-show" remains constant throughout the time period. 
+
+
+```{r}
+
+
+medical_data %>% group_by(Gender) %>% summarise(Count = n()) %>% mutate(Percent = Count/sum(Count))
+```
+The total percentage of female count being 195400 is high as compared to male count.
+
+
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+show_noshow <- medical_data %>%  group_by(Age, Gender) %>%  count(Status)
+
+show_noshow <- spread(show_noshow, key = Status, value = n)
+```
+
+```{r}
+library(knitr)
+colnames(show_noshow) <- c("Age", "Gender", "Noshow", "Show")
+```
+
+Calculating a no show rate
+```{r}
+
+library(tidyr)
+show_noshow <- show_noshow %>%  mutate(Noshowrate = round(Noshow/(Noshow + Show), digits = 3))
+```
+
+```{r}
+show_noshow$Gender <- factor(show_noshow$Gender, levels = c("M", "F"))
+```
+
+
+```{r}
+show_noshow %>%
+  group_by(Age) %>% 
+  summarise(Noshowrate = mean(Noshowrate)) %>% 
+  ggplot() +
+  aes(x = Age, y = Noshowrate) +
+  geom_bar(stat = "identity", fill = "gray47") +
+  xlab("Age") +
+  ylab("No-Show Rate") +
+  ggtitle("No-Show Rate Depends on Age") 
+```
+ 
+Inference:
+These plots both show that the younger a person is, the more likely they will not show up and that there are a couple of outliers in age. The no-show rate of medical appointments is highly dependent on the age of the appointee, with the rate maxed out around 40% of cancellations in ages from 14 to 24 years old. The no-show rate then decreases with a minimum around 20% with 70 year old appointees. After that, the rate increases again, which may be due to smaller sample sizes compared to other ages.
+
+
+```{r}
+library(dplyr)
+show_noshow %>% 
+  ggplot() +
+  aes(x = Age, y = Noshowrate, fill = Gender) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~Gender) +
+  xlab("Age") +
+  ylab("No-Show Rate") +
+  ggtitle("No-Show Rate Depends on Age, Male / Female") +
+  scale_fill_manual(values = c("cadetblue4", "hotpink2")) +
+  
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "gray96"),
+        axis.title.x=element_blank())
+```
+
+According to the graph it can be seen that there is no significant difference between male and female for no show rate.
+
+Lets do a similar analysis for the weeks.
+```{r}
+ weekday <- medical_data %>% group_by(DayOfTheWeek, Gender) %>% count(Status)
+
+ weekday <- spread(weekday, key = Status, value = n)
+ 
+ colnames(weekday) <- c("DayOfTheWeek", "Gender", "Noshow", "Show")
+ 
+ weekday <- weekday %>% mutate(Noshowrate = round(Noshow / (Noshow + Show), digits = 3))
+ 
+ weekday$Gender <- factor(weekday$Gender, levels = c("M", "F"))
+```
+
+
+```{r}
+
+ weekday %>%
+  group_by(DayOfTheWeek) %>% 
+  summarise(Noshowrate = mean(Noshowrate)) %>%
+  ggplot() +
+  aes(x = DayOfTheWeek, y = Noshowrate) +
+  geom_bar(stat = "identity", fill = "gray47") +
+  scale_x_discrete(limits = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"),
+                   labels = c("Mon", "Tues", "Wed", "Thurs", "Fri", "Sat", "Sun")) +
+  xlab("Day of Week") +
+  ylab("No-Show Rate") +
+  ggtitle("No-Show Rate Against Day of Week") +
+  
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "gray96"),
+        axis.title.x=element_blank())
+```
+
+
+
+Similar analysis were done in regards of the day of the week. Overall, the no-show rate stays quite similar (~30%) across weekdays. Saturday's no-show rates are higher, however the number of appointments scheduled on Saturdays are also smaller (around 1400 total, compared to 10k+ for all other days), the same goes with Sunday appointments (only 6).
+
+
+```{r}
+
+  weekday %>% 
+  ggplot() +
+  aes(x = DayOfTheWeek, y = Noshowrate, fill = Gender) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~Gender) +
+  scale_x_discrete(limits = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"),
+                   labels = c("Mon", "Tues", "Wed", "Thurs", "Fri", "Sat", "Sun")) +
+  xlab("Day of Week") +
+  ylab("No-Show Rate") +
+  ggtitle("No-Show Rate Against Day of Week") +
+  scale_fill_manual(values = c("cadetblue4", "hotpink2")) +
+  
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "gray96"),
+        axis.title.x=element_blank())
+```
+
+
+Weekday analysis was then done in regards with the gender of the appointee, however there doesn't seem to be a significant difference. Saturday and Sunday differences also due to a smaller sample size as shown before. 
+
+
+Renaming each of the variables in the data since we see that there are columns with wrong name such as "Alcoolism" which stands for "Alcoholism". 
+
+```{r}
+medical_data<-dplyr::rename(medical_data,
+                      AppointmentData=ApointmentData,
+                      Alcoholism=Alcoolism,
+                      Hypertension=HiperTension, 
+                      Handicap=Handcap
+                      )
+```
+
+```{r}
+library(lubridate)
+medical_data$AppointmentData <- ymd_hms(medical_data$AppointmentData)
+medical_data$AppointmentRegistration<-ymd_hms(medical_data$AppointmentRegistration)
+medical_data$DayOfTheWeek<-factor(medical_data$DayOfTheWeek,levels=c('Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'))
+medical_data$Status<-factor(make.names(medical_data$Status))
+medical_data$AwaitingTime<-abs(medical_data$AwaitingTime)
+medical_data$Gender<-as.factor(medical_data$Gender)
+
+```
+
+```{r}
+g.smokes <- ggplot(medical_data, aes(x=Smokes,fill=Status))+geom_bar(position='fill')+ggtitle('Smokes')+ylab('Proportion')
+g.smokes
+```
+
+```{r}
+
+g.Tuberculosis<-ggplot(medical_data,aes(x=Tuberculosis,fill=Status))+geom_bar(position='fill')+ylab('Proportion')+ggtitle('Tuberculosis')
+g.Tuberculosis
+```
+
+```{r}
+g.Scholarship<-ggplot(medical_data, aes(x=Scholarship,fill=Status))+geom_bar(position='fill')+ggtitle('Scholarship')+ylab('Proportion')
+g.Scholarship
+```
+
+```{r}
+g.Handicap<-ggplot(medical_data, aes(x=Handicap,fill=Status))+geom_bar(position='fill')+ggtitle('Handicap')+ylab('Proportion')
+g.Handicap
+```
+
+```{r}
+g.Diabetes<-ggplot(medical_data, aes(x=Diabetes,fill=Status))+geom_bar(position='fill')+ggtitle('Diabetes')+ylab('Proportion')
+g.Diabetes
+```
+
+```{r}
+g.Alcoholism<-ggplot(medical_data, aes(x=Alcoholism,fill=Status))+geom_bar(position='fill')+ggtitle('Alchoholism')+ylab('Proportion')
+g.Alcoholism
+```
+
+```{r}
+g.Hypertension<-ggplot(medical_data, aes(x=Hypertension,fill=Status))+geom_bar(position='fill')+ggtitle('Hypertension')+ylab('Proportion')
+g.Hypertension
+```
+
+```{r}
+g.Sms<-ggplot(medical_data, aes(x=Sms_Reminder,fill=Status))+geom_bar(position='fill')+ggtitle('Number of SMS Reminders')+ylab('Proportion')
+g.Sms
+```
+
+```{r}
+# library(gridExtra)
+# grid.arrange(g.smokes,g.Tuberculosis,g.Scholarship,g.Handicap,g.Diabetes,g.Alcoholism,g.Hypertension,g.Sms,ncol=2)
+```
+
+Lets check the show up and No show up based on weekdays
+```{r}
+ggplot(medical_data,aes(x=DayOfTheWeek,fill=Status))+geom_bar(position='fill')+ylab('proportion')
+
+```
+
+
+From the given graph we can say that the number of show-up were higher at Sunday. That makes sense since its a
+holiday at every place.The no. of show-up were less for Saturday as compared to other day of the weeks. There could be various reasons for this.
+
+Lets have a look into number of datas for each of the week.
+```{r}
+table(medical_data$DayOfTheWeek)
+```
+We dont have much of records for sunday and staurday so a lot of inference about the showup and no showup doesnt make sense for these two days in comparison with other day of the weeks. 
+
+
+Lets see the show-up and no show-up based on awaiting time
+```{r}
+ggplot(medical_data,aes(x=AwaitingTime,fill=Status))+geom_histogram(position='fill',binwidth=10)+ylab('proportion')
+```
+
+```{r}
+
+
+   medical_data %>% group_by(Age) %>% summarise(rate=sum(Status=='No.Show')/n()) %>%   
+   ggplot(aes(x=Age,y=rate,fill=Age)) + geom_bar(stat='identity')+
+  scale_fill_gradient(low="red",high="blue")
+```
+
+
+```{r}
+cor.medical_data<-cor(medical_data[sapply(medical_data,is.numeric)])
+
+library(corrplot)
+corrplot(cor.medical_data,method='number')
+```
+
+Partitioning the data into test and training set. Taking 70 % of the data as train data and 30% as test data
+```{r}
+library(caret) 
+set.seed(1234)
+split_data <- createDataPartition(medical_data$Status, p = 0.7, list = FALSE)
+train_data <- medical_data[split_data,]
+test_data <-  medical_data[-split_data,]
+```
+
+```{r}
+
+
+fitControl <- trainControl(method = "cv",
+                           number = 5,
+                           #savePredictions="final",
+                           summaryFunction = twoClassSummary,
+                           classProbs = TRUE
+)
+```
+
+
+
+As we can see that number of "No.Show" is less than "Show" hence we will upscale the  No.Show class
+
+
+```{r}
+train_data <- upSample(train_data[, setdiff(names(medical_data), 'Status')], train_data$Status, yname="Status")
+table(train_data$Status)
+```
+
+
+```{r}
+fit_rpart <- train(Status~., 
+                   train_data,
+                   method = "rpart",
+                   metric = "ROC",
+                   trControl = fitControl)
+
+pred_rpart <- predict(fit_rpart, test_data)
+confusionMatrix(pred_rpart, test_data$Status)
+```
+
+
+
+```{r}
+library(caTools)
+pred_rpart2 <- predict(fit_rpart, test_data, type="prob")
+colAUC(pred_rpart2, test_data$Status, plotROC=TRUE)
+```
+
+
+
+
+Lets make a decision tree and see which are the important variables to validate show up and no-show up. 
+```{r}
+library(rpart.plot)
+rpart.plot(fit_rpart$finalModel, type = 2, fallen.leaves = F, cex = 1, extra = 2)
+```
+
+We have tried rpart with other feature variable combinations but there are not great difference.
+
+
+Looking at the model we can state that older people with age greater than 46 tend to show up always. Incase
+of younger people, they show up if the appointment is close to 8.5 days or less. 
+
+
+Lets run a logistic regression on the data
+```{r}
+fit_glm <- train(Status~.-AppointmentRegistration-AppointmentData-Handicap-Tuberculosis, 
+                 train_data,
+                 method = "glm",
+                 metric = "ROC",
+                 preProc = c("center", "scale"),
+                 trControl = fitControl)
+
+summary(fit_glm)
+
+```
+Inference: 
+
+a) We can see that the variables Gender, Diabetes are not statistically significant. 
+b) As for the statistically significant variables, Alcoholism and Age has the lowest p-value 
+   suggesting a strong association of the Alcholism and Age of the  
+   patient with the probability of not showing up.
+   
+
+```{r}
+pred_glm <- predict(fit_glm, test_data)
+confusionMatrix(pred_glm, test_data$Status)
+```
+
+
+```{r}
+summary(fit_glm$finalModel)
+pred_glm2 <- predict(fit_glm, test_data, type="prob")
+colAUC(pred_glm2, test_data$Status, plotROC=TRUE)
+```
+This model leds an auc greater but near to the rpart model one.
+
+This logist regression model says that these variables are significant and increase the risk of "No Show":
+
+
+```{r}
+summary(fit_glm)$coef %>% 
+as.data.frame() %>% 
+cbind(feature=rownames(summary(fit_glm)$coef)) %>% 
+filter (.[[4]] <= 0.05) %>% 
+arrange(desc(abs(Estimate)), desc(.[[4]]))
+```
+
+The important variables which affect the probability of "No Show" are :
+
+a) Age: Younger people affect the no show as compared to older people
+b) Awaiting time: The greater the awaiting time, the chances of no show up increases
+c) Scholarship: Wherever there is an existent of Scholarship, the probability of no-show gets affected
+
+Age and AwaitingTime coincide with the classification tree model results. It is surprising that Gender is not significative enough to be considered as a important.
+
+```{r}
+medical_data$AwaitingTime <- abs(medical_data$AwaitingTime)
+medical_data$Sex <-ifelse(medical_data$Gender =="F", 1, 0)
+is.numeric(medical_data$Sex)
+```
+
+```{r}
+
+medical_data$Status<- as.factor(medical_data$Status)
+medical_data$Visit<- ifelse(medical_data$Status == "Show-Up", 1, 0)
+is.numeric(medical_data$Visit)
+```
+
+
+
